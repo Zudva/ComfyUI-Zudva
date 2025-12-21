@@ -1,0 +1,35 @@
+# Шаблон расположения моделей для utils.distribute_downloads
+# Можно добавлять свои паттерны по имени файла (glob-выражения)
+# для точного попадания в нужные подпапки внутри `models/`.
+#
+# Пример ниже настраивает:
+# - kandinsky5lite* как диффузионные модели;
+# - текстовые энкодеры Qwen и CLIP-L в text_encoders.
+
+# Ключи верхнего уровня — подпапки внутри `models/`.
+# Значения — список glob-паттернов для имени файла.
+
+diffusion_models:
+  - "kandinsky5lite_t2v_sft_5s*.safetensors"
+  - "wan2.1_vace_14B_fp*.safetensors"
+  - "wan2.1_vace_1.3B_fp*.safetensors"
+  - "Wan2_2-Animate-14B_fp*.safetensors"
+  - "wan2.2_animate_14B_*.safetensors"
+
+text_encoders:
+  - "qwen_2.5_vl_7b_fp8_scaled*.safetensors"
+  - "clip_l*.safetensors"
+  - "umt5_xxl_fp*_e4m3fn_scaled*.safetensors"
+  - "umt5_xxl_fp16.safetensors"
+
+loras:
+  - "Wan21_CausVid_*_lora_rank32*.safetensors"
+  - "WanAnimate_relight_lora_fp16.safetensors"
+  - "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+
+clip_vision:
+  - "clip_vision_h*.safetensors"
+
+vae:
+  - "hunyuan_video_vae_*.safetensors"
+  - "wan_2.1_vae*.safetensors"
