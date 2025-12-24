@@ -35,6 +35,28 @@ except ImportError:
 
 console = Console()
 
+# Detect GPU configuration
+def detect_gpu_config():
+    """Определение конфигурации GPU"""
+    cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    
+    if not cuda_devices:
+        return {
+            'mode': 'cpu',
+            'devices': [],
+            'count': 0
+        }
+    
+    devices = [d.strip() for d in cuda_devices.split(',') if d.strip()]
+    
+    return {
+        'mode': 'dual' if len(devices) >= 2 else 'single',
+        'devices': devices,
+        'count': len(devices)
+    }
+
+GPU_CONFIG = detect_gpu_config()
+
 # Состояние загрузки
 loading_state = {
     "vram": None,
@@ -46,6 +68,7 @@ loading_state = {
     "frontend": None,
     "port": None,
     "cuda_devices": None,
+    "gpu_list": [],  # Список всех GPU
     "custom_nodes": [],
     "warnings": [],
     "errors": [],
@@ -139,6 +162,40 @@ def create_header_panel():
     return Panel(header, box=box.DOUBLE, border_style="cyan")
 
 
+def create_gpu_config_panel():
+    """Создание панели с конфигурацией GPU"""
+    if GPU_CONFIG['mode'] == 'cpu':
+        text = Text("🖥️  CPU Mode", style="bold yellow")
+        text.append("\nNo CUDA devices configured", style="dim")
+        return Panel(text, title="GPU Configuration", border_style="yellow", box=box.ROUNDED)
+    
+    text = Text()
+    
+    # Режим работы
+    if GPU_CONFIG['mode'] == 'dual':
+        text.append("🎮 Dual GPU Mode\n", style="bold green")
+        text.append(f"Using {GPU_CONFIG['count']} GPUs for distributed processing\n\n", style="dim")
+    else:
+        text.append("🎮 Single GPU Mode\n", style="bold cyan")
+        text.append(f"Using 1 GPU for processing\n\n", style="dim")
+    
+    # CUDA_VISIBLE_DEVICES
+    cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')
+    text.append("CUDA_VISIBLE_DEVICES: ", style="cyan")
+    text.append(f"{cuda_devices}\n", style="yellow bold")
+    
+    # Список GPU из PyTorch (если доступен)
+    if loading_state["gpu_list"]:
+        text.append("\nDetected GPUs:\n", style="cyan")
+        for i, gpu_info in enumerate(loading_state["gpu_list"]):
+            text.append(f"  GPU {i}: ", style="white")
+            text.append(f"{gpu_info['name']}\n", style="green")
+            text.append(f"         {gpu_info['memory']:.2f} GB VRAM\n", style="dim")
+    
+    border_color = "green" if GPU_CONFIG['mode'] == 'dual' else "cyan"
+    return Panel(text, title="🎮 GPU Configuration", border_style=border_color, box=box.ROUNDED)
+
+
 def create_system_info_table():
     """Создание таблицы с системной информацией"""
     table = Table(title="System Information", box=box.ROUNDED, border_style="green")
@@ -158,18 +215,15 @@ def create_system_info_table():
         table.add_row("🌐 Frontend", loading_state["frontend"])
     
     if loading_state["device"]:
-        table.add_row("🎮 Device", loading_state["device"])
-    
-    if loading_state["cuda_devices"]:
-        table.add_row("🔢 CUDA GPUs", loading_state["cuda_devices"])
+        table.add_row("🎮 Primary Device", loading_state["device"])
     
     if loading_state["vram"]:
         vram_gb = loading_state["vram"] / 1024
-        table.add_row("💾 VRAM", f"{vram_gb:.2f} GB ({loading_state['vram']} MB)")
+        table.add_row("💾 Primary VRAM", f"{vram_gb:.2f} GB ({loading_state['vram']} MB)")
     
     if loading_state["ram"]:
         ram_gb = loading_state["ram"] / 1024
-        table.add_row("🧠 RAM", f"{ram_gb:.2f} GB ({loading_state['ram']} MB)")
+        table.add_row("🧠 System RAM", f"{ram_gb:.2f} GB ({loading_state['ram']} MB)")
     
     if loading_state["port"]:
         url = f"http://127.0.0.1:{loading_state['port']}"
@@ -236,6 +290,10 @@ def display_dashboard():
     console.print(create_header_panel())
     console.print()
     
+    # GPU конфигурация
+    console.print(create_gpu_config_panel())
+    console.print()
+    
     # Системная информация
     console.print(create_system_info_table())
     console.print()
@@ -256,6 +314,35 @@ def display_dashboard():
     console.print(create_status_panel())
 
 
+def detect_gpus_via_torch():
+    """Определение GPU через PyTorch"""
+    try:
+        root_dir = Path(__file__).parent
+        venv_python = root_dir / ".venv" / "bin" / "python"
+        
+        # Запускаем Python скрипт для определения GPU
+        result = subprocess.run(
+            [str(venv_python), "-c", 
+             "import torch; import json; "
+             "gpus = [{'name': torch.cuda.get_device_name(i), "
+             "'memory': torch.cuda.get_device_properties(i).total_memory / 1024**3} "
+             "for i in range(torch.cuda.device_count())]; "
+             "print(json.dumps(gpus))"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=os.environ.copy()
+        )
+        
+        if result.returncode == 0:
+            import json
+            return json.loads(result.stdout.strip())
+    except Exception:
+        pass
+    
+    return []
+
+
 def run_comfyui(args):
     """Запуск ComfyUI с перехватом вывода"""
     root_dir = Path(__file__).parent
@@ -265,6 +352,9 @@ def run_comfyui(args):
         console.print("[red]❌ Python venv не найден![/red]")
         console.print(f"Ожидался: {venv_python}")
         sys.exit(1)
+    
+    # Определяем GPU через PyTorch
+    loading_state["gpu_list"] = detect_gpus_via_torch()
     
     # Формируем команду
     cmd = [str(venv_python), "main.py"] + args
