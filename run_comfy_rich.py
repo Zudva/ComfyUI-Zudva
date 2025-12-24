@@ -7,6 +7,7 @@ import sys
 import subprocess
 import re
 import signal
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -69,6 +70,7 @@ loading_state = {
     "port": None,
     "cuda_devices": None,
     "gpu_list": [],  # Список всех GPU
+    "last_log": "",
     "custom_nodes": [],
     "warnings": [],
     "errors": [],
@@ -147,6 +149,9 @@ def parse_log_line(line):
     # Errors (но не критичные)
     elif "ERROR" in line and "DEPRECATION" not in line:
         loading_state["errors"].append(line.strip())
+    
+    # Сохраняем последний лог
+    loading_state["last_log"] = line
 
 
 def create_header_panel():
@@ -280,7 +285,13 @@ def create_status_panel():
         status.append("\n\n💡 Press Ctrl+C to stop", style="dim")
         return Panel(status, title="Status", border_style="green", box=box.HEAVY)
     else:
-        status = Text("⏳ Loading ComfyUI...", style="bold yellow")
+        dots = "." * ((int(time.time()) % 3) + 1)
+        status = Text(f"⏳ Loading ComfyUI{dots}", style="bold yellow")
+        if loading_state.get("last_log"):
+            last = loading_state["last_log"]
+            if len(last) > 100:
+                last = last[:97] + "..."
+            status.append(f"\n{last}", style="dim")
         return Panel(status, title="Status", border_style="yellow", box=box.HEAVY)
 
 
@@ -312,6 +323,26 @@ def display_dashboard():
     
     # Статус
     console.print(create_status_panel())
+
+
+def render_loading_line():
+    """Обновление строки статуса загрузки без полного редизайна"""
+    dots = "." * ((int(time.time()) % 3) + 1)
+    line = f"⏳ Loading ComfyUI{dots}"
+    if loading_state.get("last_log"):
+        last = loading_state["last_log"]
+        if len(last) > 80:
+            last = last[:77] + "..."
+        line += f" | {last}"
+    
+    # Очищаем строку и печатаем с возвратом каретки
+    terminal_width = console.width
+    padded_line = line.ljust(terminal_width)[:terminal_width]
+    
+    # Используем print напрямую для корректного \r
+    import sys
+    sys.stdout.write(f"\r{padded_line}")
+    sys.stdout.flush()
 
 
 def detect_gpus_via_torch():
@@ -383,11 +414,12 @@ def run_comfyui(args):
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    last_update = datetime.now()
-    dashboard_shown = False
+    loading_dashboard_shown = False
+    started_dashboard_shown = False
+    last_loading_inline = 0.0
     
     try:
-        for line in process.stdout:
+        for line in process.stdout or []:
             line = line.rstrip()
             if not line:
                 continue
@@ -395,15 +427,22 @@ def run_comfyui(args):
             # Парсим строку
             parse_log_line(line)
             
-            # Обновляем дашборд после старта сервера или раз в секунду
-            now = datetime.now()
-            if loading_state["server_started"] and not dashboard_shown:
+            # Показать один раз после загрузки основных данных
+            if not loading_dashboard_shown and loading_state["python"]:
                 display_dashboard()
-                dashboard_shown = True
-            elif (now - last_update).total_seconds() > 1:
-                if loading_state["python"]:  # Если уже есть данные
-                    display_dashboard()
-                last_update = now
+                loading_dashboard_shown = True
+
+            # Финальный показ после старта сервера
+            if loading_state["server_started"] and not started_dashboard_shown:
+                display_dashboard()
+                started_dashboard_shown = True
+
+            # Обновляем строку загрузки точками до старта сервера (не перепечатывая весь экран)
+            if not loading_state["server_started"]:
+                now_ts = time.time()
+                if now_ts - last_loading_inline > 0.5:
+                    render_loading_line()
+                    last_loading_inline = now_ts
             
             # Также выводим сырой лог в файл для отладки
             # Можно раскомментировать если нужно
