@@ -15,6 +15,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PY="$ROOT_DIR/.venv/bin/python"
 
+# Load .env file if exists
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 usage() {
   cat <<EOF
 Использование: ./run_comfy.sh [опции] [-- дополнительные_аргументы_для_ComfyUI]
@@ -38,12 +45,19 @@ if [[ ! -x "$VENV_PY" ]]; then
   exit 1
 fi
 
+# Default values (can be overridden by .env or command line)
 MODE="dual"
-GPUS="0,1"
-PORT="8188"
+GPUS="${CUDA_VISIBLE_DEVICES:-0,1}"
+PORT="${COMFYUI_PORT:-8188}"
 USE_CPU=false
 EXTRA_ARGS=()
-ENABLE_MANAGER=false
+ENABLE_MANAGER="${ENABLE_COMFYUI_MANAGER:-false}"
+
+# Parse COMFYUI_ARGS from .env if present
+if [[ -n "${COMFYUI_ARGS:-}" ]]; then
+  IFS=' ' read -ra PARSED_ARGS <<< "$COMFYUI_ARGS"
+  EXTRA_ARGS+=("${PARSED_ARGS[@]}")
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
