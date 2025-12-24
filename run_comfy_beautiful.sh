@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Запуск ComfyUI из локального venv с выбором одного или двух GPU.
-# Примеры:
-#   ./run_comfy.sh                    # использовать две GPU 0,1 (по умолчанию)
-#   ./run_comfy.sh --single 0         # только GPU 0
-#   ./run_comfy.sh --single 1         # только GPU 1
-#   ./run_comfy.sh --dual             # GPU 0 и 1
-#   ./run_comfy.sh --gpus 0,1,2       # произвольный список устройств
-#   ./run_comfy.sh --cpu              # запуск на CPU
-#   ./run_comfy.sh --manager          # включить ComfyUI-Manager
-#   ./run_comfy.sh --port 8190        # другой порт
+# Запуск ComfyUI с красивым выводом через Rich library
+# Использование точно такое же как run_comfy.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PY="$ROOT_DIR/.venv/bin/python"
+RICH_LAUNCHER="$ROOT_DIR/run_comfy_rich.py"
 
 usage() {
   cat <<EOF
-Использование: ./run_comfy.sh [опции] [-- дополнительные_аргументы_для_ComfyUI]
+🎨 ComfyUI Beautiful Launcher
+Использование: ./run_comfy_beautiful.sh [опции]
 
 Опции:
   --single GPU_ID     Использовать один GPU (например, 0 или 1)
@@ -28,14 +22,25 @@ usage() {
   --manager           Включить ComfyUI-Manager (--enable-manager)
   -h, --help          Показать эту справку
 
-Все аргументы после "--" передаются напрямую в main.py.
+Этот скрипт использует Rich library для красивого форматированного вывода.
 EOF
 }
 
 if [[ ! -x "$VENV_PY" ]]; then
-  echo "[ERROR] Не найден Python в venv: $VENV_PY" >&2
+  echo "❌ Не найден Python в venv: $VENV_PY" >&2
   echo "Создайте окружение: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt" >&2
   exit 1
+fi
+
+# Проверяем наличие rich (через python -m pip, чтобы обойти битые shebang'и pip)
+if ! "$VENV_PY" - <<'PY' 2>/dev/null; then
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("rich") else 1)
+PY
+then
+  echo "📦 Installing rich library..."
+  "$VENV_PY" -m pip install rich -q
 fi
 
 MODE="dual"
@@ -50,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     --single)
       MODE="single"
       if [[ $# -lt 2 ]]; then
-        echo "[ERROR] Для --single нужно указать номер GPU (например, 0)." >&2
+        echo "❌ Для --single нужно указать номер GPU (например, 0)." >&2
         exit 1
       fi
       GPUS="$2"
@@ -63,7 +68,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gpus)
       if [[ $# -lt 2 ]]; then
-        echo "[ERROR] Для --gpus нужно указать список, например: 0,1" >&2
+        echo "❌ Для --gpus нужно указать список, например: 0,1" >&2
         exit 1
       fi
       MODE="custom"
@@ -76,7 +81,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port)
       if [[ $# -lt 2 ]]; then
-        echo "[ERROR] Для --port нужно указать номер порта." >&2
+        echo "❌ Для --port нужно указать номер порта." >&2
         exit 1
       fi
       PORT="$2"
@@ -92,14 +97,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --)
       shift
-      # Всё остальное — напрямую в ComfyUI
       while [[ $# -gt 0 ]]; do
         EXTRA_ARGS+=("$1")
         shift
       done
       ;;
     *)
-      # Любой другой аргумент прокидываем дальше в main.py
       EXTRA_ARGS+=("$1")
       shift
       ;;
@@ -108,18 +111,17 @@ done
 
 cd "$ROOT_DIR"
 
+# Устанавливаем переменные окружения
 if [[ "$USE_CPU" == true ]]; then
   unset CUDA_VISIBLE_DEVICES
-  echo "[INFO] Запуск на CPU (без CUDA)."
+  echo "🖥️  Запуск на CPU (без CUDA)"
 else
   export CUDA_VISIBLE_DEVICES="$GPUS"
-  echo "[INFO] CUDA_VISIBLE_DEVICES=$GPUS"
 fi
-
-echo "[INFO] Порт: $PORT"
 
 if [[ "$ENABLE_MANAGER" == true ]]; then
   EXTRA_ARGS+=("--enable-manager")
 fi
 
-exec "$VENV_PY" main.py --port "$PORT" "${EXTRA_ARGS[@]}"
+# Запускаем через Rich launcher
+exec "$VENV_PY" "$RICH_LAUNCHER" --port "$PORT" "${EXTRA_ARGS[@]}"

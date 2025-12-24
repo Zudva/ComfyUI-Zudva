@@ -213,6 +213,13 @@ Python 3.13 is very well supported. If you have trouble with some custom node de
 
 Git clone this repo.
 
+Create and activate the local venv (required so VS Code, CLI, and any GitHub actions use the same Python):
+
+```
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
 Put your SD checkpoints (the huge ckpt/safetensors files) in: models/checkpoints
 
 Put your VAE in: models/vae

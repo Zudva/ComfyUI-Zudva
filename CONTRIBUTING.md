@@ -4,6 +4,42 @@ Welcome, and thank you for your interest in contributing to ComfyUI!
 
 There are several ways in which you can contribute, beyond writing code. The goal of this document is to provide a high-level overview of how you can get involved.
 
+## Local environment (venv is mandatory)
+
+Use the project-local virtual environment for any development (CLI, VS Code, GitHub Codespaces/Actions runners you start locally):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+**Important**: All terminal commands, scripts, and IDE configurations must use the virtual environment located at:
+```
+/media/zudva/git/git/ComfyUI/.venv
+```
+
+In VS Code, select interpreter `.venv/bin/python` (Ctrl/Cmd+Shift+P → "Python: Select Interpreter"). This keeps tooling, linting, and scripts aligned with the same Python that GitHub automation expects.
+
+### Running ComfyUI
+
+Always use the venv Python interpreter:
+
+```bash
+# Recommended: Use launcher scripts
+./run_comfy.sh                    # Standard launcher
+./run_comfy_beautiful.sh          # With Rich UI formatting
+
+# Direct execution
+.venv/bin/python main.py --port 8188
+
+# With specific GPU configuration
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python main.py
+```
+
+For more details, see [Development Guide](.github/DEVELOPMENT.md).
+
 ## Asking Questions
 
 Have a question? Instead of opening an issue, please ask on [Discord](https://comfy.org/discord) or [Matrix](https://app.element.io/#/room/%23comfyui_space%3Amatrix.org) channels. Our team and the community will help you.
