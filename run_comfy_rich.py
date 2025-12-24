@@ -8,6 +8,7 @@ import subprocess
 import re
 import signal
 import time
+import warnings
 from pathlib import Path
 from datetime import datetime
 
@@ -21,6 +22,7 @@ try:
     from rich.progress import Progress, SpinnerColumn, TextColumn
     from rich.syntax import Syntax
     from rich import box
+    from rich.spinner import Spinner
 except ImportError:
     print("❌ Rich library не установлена. Устанавливаю...")
     subprocess.run([sys.executable, "-m", "pip", "install", "rich"], check=True)
@@ -33,8 +35,17 @@ except ImportError:
     from rich.progress import Progress, SpinnerColumn, TextColumn
     from rich.syntax import Syntax
     from rich import box
+    from rich.spinner import Spinner
+    from rich import box
 
 console = Console()
+
+# Silence known timm FutureWarning
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="timm.models.layers"
+)
 
 # Detect GPU configuration
 def detect_gpu_config():
@@ -71,7 +82,11 @@ loading_state = {
     "cuda_devices": None,
     "gpu_list": [],  # Список всех GPU
     "last_log": "",
+    "last_log_time": None,  # Время последнего лога
+    "start_time": None,  # Время старта
+    "current_stage": "Initializing",  # Текущий этап
     "custom_nodes": [],
+    "custom_nodes_loaded": 0,  # Счетчик загруженных нод
     "warnings": [],
     "errors": [],
     "server_started": False
@@ -80,78 +95,81 @@ loading_state = {
 
 def parse_log_line(line):
     """Парсинг строк лога ComfyUI"""
-    # VRAM info
-    if "Total VRAM" in line:
+    lower = line.lower()
+    
+    # Определение стадий загрузки
+    if "initializing" in lower or "starting" in lower:
+        loading_state["current_stage"] = "Initializing"
+    elif "total vram" in lower:
+        loading_state["current_stage"] = "Detecting Hardware"
         match = re.search(r"Total VRAM (\d+) MB, total RAM (\d+) MB", line)
         if match:
             loading_state["vram"] = int(match.group(1))
             loading_state["ram"] = int(match.group(2))
-    
-    # PyTorch version
-    elif "pytorch version:" in line:
+    elif "pytorch" in lower and "version" in lower:
+        loading_state["current_stage"] = "Loading PyTorch"
         match = re.search(r"pytorch version: ([\d.+\w]+)", line)
         if match:
             loading_state["pytorch"] = match.group(1)
-    
-    # Device info
-    elif "Device:" in line:
+    elif "device:" in lower:
+        loading_state["current_stage"] = "Configuring GPU"
         match = re.search(r"Device: (.+)", line)
         if match:
             loading_state["device"] = match.group(1).strip()
-    
-    # Python version
-    elif "Python version:" in line:
+    elif "python version:" in lower:
         match = re.search(r"Python version: (.+)", line)
         if match:
             loading_state["python"] = match.group(1).strip()
-    
-    # ComfyUI version
-    elif "ComfyUI version:" in line:
+    elif "comfyui version:" in lower:
         match = re.search(r"ComfyUI version: ([\d.]+)", line)
         if match:
             loading_state["comfyui"] = match.group(1)
-    
-    # Frontend version
-    elif "ComfyUI frontend version:" in line:
+    elif "comfyui frontend version:" in lower:
         match = re.search(r"ComfyUI frontend version: ([\d.]+)", line)
         if match:
             loading_state["frontend"] = match.group(1)
-    
-    # CUDA devices
-    elif "CUDA_VISIBLE_DEVICES" in line:
-        match = re.search(r"CUDA_VISIBLE_DEVICES[=:]?\s*(\S+)", line)
-        if match:
-            loading_state["cuda_devices"] = match.group(1)
-    
-    # Port
-    elif "Порт:" in line or "http://127.0.0.1:" in line:
-        match = re.search(r"(\d{4,5})", line)
-        if match:
-            loading_state["port"] = match.group(1)
-    
-    # Server started
-    elif "To see the GUI go to:" in line:
-        loading_state["server_started"] = True
-    
-    # Custom nodes
+    elif "import times for custom nodes" in lower:
+        loading_state["current_stage"] = "Loading Custom Nodes"
     elif re.match(r"\s+[\d.]+ seconds: .+custom_nodes", line):
+        loading_state["current_stage"] = "Loading Custom Nodes"
         match = re.search(r"([\d.]+) seconds: (.+)", line)
         if match:
             loading_state["custom_nodes"].append({
                 "time": float(match.group(1)),
                 "path": match.group(2).strip()
             })
+            loading_state["custom_nodes_loaded"] = len(loading_state["custom_nodes"])
+    elif "loading" in lower and "model" in lower:
+        loading_state["current_stage"] = "Loading Models"
+    elif "starting server" in lower or "listening on" in lower:
+        loading_state["current_stage"] = "Starting Server"
+    elif "to see the gui go to:" in lower:
+        loading_state["current_stage"] = "Ready"
+        loading_state["server_started"] = True
+    
+    # CUDA devices
+    if "CUDA_VISIBLE_DEVICES" in line:
+        match = re.search(r"CUDA_VISIBLE_DEVICES[=:]?\s*(\S+)", line)
+        if match:
+            loading_state["cuda_devices"] = match.group(1)
+    
+    # Port
+    if "Порт:" in line or "http://127.0.0.1:" in line:
+        match = re.search(r"(\d{4,5})", line)
+        if match:
+            loading_state["port"] = match.group(1)
     
     # Warnings
-    elif "WARNING" in line or "Warning:" in line:
+    if "WARNING" in line or "Warning:" in line:
         loading_state["warnings"].append(line.strip())
     
     # Errors (но не критичные)
-    elif "ERROR" in line and "DEPRECATION" not in line:
+    if "ERROR" in line and "DEPRECATION" not in line:
         loading_state["errors"].append(line.strip())
     
-    # Сохраняем последний лог
+    # Сохраняем последний лог и время
     loading_state["last_log"] = line
+    loading_state["last_log_time"] = time.time()
 
 
 def create_header_panel():
@@ -285,13 +303,33 @@ def create_status_panel():
         status.append("\n\n💡 Press Ctrl+C to stop", style="dim")
         return Panel(status, title="Status", border_style="green", box=box.HEAVY)
     else:
-        dots = "." * ((int(time.time()) % 3) + 1)
-        status = Text(f"⏳ Loading ComfyUI{dots}", style="bold yellow")
+        # Время загрузки
+        elapsed = ""
+        if loading_state.get("start_time"):
+            elapsed_sec = int(time.time() - loading_state["start_time"])
+            elapsed = f" ({elapsed_sec}s)"
+        
+        # Текущий этап
+        stage = loading_state.get("current_stage", "Loading")
+        status = Text(f"⏳ {stage}{elapsed}", style="bold yellow")
+        
+        # Дополнительная информация о этапе
+        if stage == "Loading Custom Nodes" and loading_state["custom_nodes_loaded"] > 0:
+            status.append(f"\n📦 Loaded {loading_state['custom_nodes_loaded']} custom nodes", style="cyan")
+        
+        # Последний лог
         if loading_state.get("last_log"):
             last = loading_state["last_log"]
             if len(last) > 100:
                 last = last[:97] + "..."
             status.append(f"\n{last}", style="dim")
+        
+        # Watchdog warning
+        if loading_state.get("last_log_time"):
+            time_since_log = time.time() - loading_state["last_log_time"]
+            if time_since_log > 30:
+                status.append(f"\n\n⚠️  No activity for {int(time_since_log)}s...", style="yellow")
+        
         return Panel(status, title="Status", border_style="yellow", box=box.HEAVY)
 
 
@@ -327,12 +365,31 @@ def display_dashboard():
 
 def render_loading_line():
     """Обновление строки статуса загрузки без полного редизайна"""
-    dots = "." * ((int(time.time()) % 3) + 1)
-    line = f"⏳ Loading ComfyUI{dots}"
+    # Spinner frames
+    spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    frame = spinner_frames[int(time.time() * 10) % len(spinner_frames)]
+    
+    # Elapsed time
+    elapsed = ""
+    if loading_state.get("start_time"):
+        elapsed_sec = int(time.time() - loading_state["start_time"])
+        elapsed = f" [{elapsed_sec}s]"
+    
+    # Текущий этап
+    stage = loading_state.get("current_stage", "Loading")
+    line = f"{frame} {stage}{elapsed}"
+    
+    # Счетчик custom nodes
+    if stage == "Loading Custom Nodes" and loading_state["custom_nodes_loaded"] > 0:
+        line += f" ({loading_state['custom_nodes_loaded']} nodes)"
+    
+    # Последний лог (укороченный)
     if loading_state.get("last_log"):
         last = loading_state["last_log"]
-        if len(last) > 80:
-            last = last[:77] + "..."
+        # Укорачиваем для влезания в строку
+        max_log_len = 50
+        if len(last) > max_log_len:
+            last = last[:max_log_len-3] + "..."
         line += f" | {last}"
     
     # Очищаем строку и печатаем с возвратом каретки
@@ -387,11 +444,19 @@ def run_comfyui(args):
     # Определяем GPU через PyTorch
     loading_state["gpu_list"] = detect_gpus_via_torch()
     
+    # Время старта
+    loading_state["start_time"] = time.time()
+    loading_state["last_log_time"] = time.time()
+    
     # Формируем команду
     cmd = [str(venv_python), "main.py"] + args
     
     # Запускаем процесс
     console.print("[cyan]🚀 Starting ComfyUI...[/cyan]\n")
+    
+    env = os.environ.copy()
+    # Подавляем FutureWarning из timm в subprocess
+    env["PYTHONWARNINGS"] = "ignore::FutureWarning:timm.models.layers"
     
     process = subprocess.Popen(
         cmd,
@@ -400,7 +465,7 @@ def run_comfyui(args):
         text=True,
         bufsize=1,
         cwd=str(root_dir),
-        env=os.environ.copy()
+        env=env
     )
     
     def signal_handler(sig, frame):
@@ -437,10 +502,10 @@ def run_comfyui(args):
                 display_dashboard()
                 started_dashboard_shown = True
 
-            # Обновляем строку загрузки точками до старта сервера (не перепечатывая весь экран)
+            # Обновляем строку загрузки spinner'ом до старта сервера (не перепечатывая весь экран)
             if not loading_state["server_started"]:
                 now_ts = time.time()
-                if now_ts - last_loading_inline > 0.5:
+                if now_ts - last_loading_inline > 0.1:  # Обновляем чаще для плавности spinner
                     render_loading_line()
                     last_loading_inline = now_ts
             
