@@ -437,18 +437,35 @@ def get_full_path(folder_name: str, filename: str) -> str | None:
         full_path = os.path.join(x, filename)
         if os.path.isfile(full_path):
             return full_path
+        elif os.path.isdir(full_path):
+            # For sharded models (e.g., high_noise_model directory), return the directory path
+            return full_path
         elif os.path.islink(full_path):
-            logging.warning("WARNING path {} exists but doesn't link anywhere, skipping.".format(full_path))
+            # Follow symlink and check if it points to a file or directory
+            try:
+                target = os.path.realpath(full_path)
+                if os.path.isfile(target) or os.path.isdir(target):
+                    return full_path
+            except Exception:
+                logging.warning("WARNING path {} exists but doesn't link anywhere, skipping.".format(full_path))
 
     # If not found in configured model folders, try HF cache directory as a fallback
     try:
         hf_cache = os.environ.get("HF_HOME", "/media/zudva/cache/hf_cache")
         if hf_cache and os.path.isdir(hf_cache):
-            # Look for matching filename in HF cache
-            basename = os.path.basename(filename)
-            for dirpath, _dirs, files in os.walk(hf_cache):
+            # Look for matching filename (file or directory) in HF cache
+            for dirpath, dirs, files in os.walk(hf_cache):
+                # Check if filename is a file
+                basename = os.path.basename(filename)
                 if basename in files:
                     return os.path.join(dirpath, basename)
+                # Check if filename is a directory (for sharded models)
+                if basename in dirs:
+                    return os.path.join(dirpath, basename)
+                # Check for full path match with snapshots (e.g., models--Wan/snapshots/hash/high_noise_model)
+                candidate = os.path.join(dirpath, filename)
+                if os.path.isdir(candidate) or os.path.isfile(candidate):
+                    return candidate
     except Exception:
         pass
 
