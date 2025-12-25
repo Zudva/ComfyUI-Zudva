@@ -42,11 +42,9 @@ folder_names_and_paths["loras"] = (loras_dirs, supported_pt_extensions)
 folder_names_and_paths["vae"] = (vae_dirs, supported_pt_extensions)
 folder_names_and_paths["text_encoders"] = (text_encoder_dirs, supported_pt_extensions)
 
-# Add HF cache to diffusion_models BEFORE custom nodes copy this list
-diffusion_dirs = [os.path.join(models_dir, "unet"), os.path.join(models_dir, "diffusion_models")]
-if hf_cache_exists:
-    diffusion_dirs.append(hf_cache_dir)
-folder_names_and_paths["diffusion_models"] = (diffusion_dirs, supported_pt_extensions)
+# diffusion_models: Use symlinks instead of direct HF cache to avoid listing shards
+# Create symlinks manually: ln -sfn /path/to/hf_cache/models--Repo--Name/snapshots/<hash> models/diffusion_models/ModelName
+folder_names_and_paths["diffusion_models"] = ([os.path.join(models_dir, "unet"), os.path.join(models_dir, "diffusion_models")], supported_pt_extensions)
 folder_names_and_paths["clip_vision"] = ([os.path.join(models_dir, "clip_vision")], supported_pt_extensions)
 folder_names_and_paths["style_models"] = ([os.path.join(models_dir, "style_models")], supported_pt_extensions)
 folder_names_and_paths["embeddings"] = ([os.path.join(models_dir, "embeddings")], supported_pt_extensions)
@@ -365,6 +363,56 @@ def filter_files_extensions(files: Collection[str], extensions: Collection[str])
     return sorted(list(filter(lambda a: os.path.splitext(a)[-1].lower() in extensions or len(extensions) == 0, files)))
 
 
+def filter_sharded_models(files: list[str]) -> list[str]:
+    """
+    Filter out individual shards from HuggingFace models and keep only representative entries.
+    
+    For sharded models like diffusion_pytorch_model-00001-of-00006.safetensors,
+    this function:
+    1. Detects shard patterns (e.g., -00001-of-00006, -00002-of-00006)
+    2. Groups shards by their parent directory
+    3. Returns only the parent directory path for each sharded model
+    4. Keeps non-sharded files as-is
+    
+    Example:
+        Input: [
+            'Wan2.2-I2V-A14B/high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors',
+            'Wan2.2-I2V-A14B/high_noise_model/diffusion_pytorch_model-00002-of-00006.safetensors',
+            'Wan2.2-I2V-A14B/low_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors',
+            'regular_model.safetensors'
+        ]
+        Output: [
+            'Wan2.2-I2V-A14B',
+            'regular_model.safetensors'
+        ]
+    """
+    import re
+    
+    # Pattern for sharded model files: something-00001-of-00006.ext
+    shard_pattern = re.compile(r'-\d{5}-of-\d{5}\.(safetensors|bin|pth|ckpt)$', re.IGNORECASE)
+    
+    sharded_model_roots = set()
+    non_sharded_files = []
+    
+    for file_path in files:
+        if shard_pattern.search(file_path):
+            # This is a shard - extract the model root directory
+            # For 'Wan2.2-I2V-A14B/high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors'
+            # we want to keep just 'Wan2.2-I2V-A14B'
+            parts = file_path.split(os.sep)
+            if len(parts) > 1:
+                # Get the top-level directory (model name)
+                model_root = parts[0]
+                sharded_model_roots.add(model_root)
+        else:
+            # Not a shard - keep as-is
+            non_sharded_files.append(file_path)
+    
+    # Combine: sharded model roots + non-sharded files
+    result = list(sharded_model_roots) + non_sharded_files
+    return sorted(result)
+
+
 
 def get_full_path(folder_name: str, filename: str) -> str | None:
     """
@@ -416,7 +464,13 @@ def get_filename_list_(folder_name: str) -> tuple[list[str], dict[str, float], f
     output_folders = {}
     for x in folders[0]:
         files, folders_all = recursive_search(x, excluded_dir_names=[".git"])
-        output_list.update(filter_files_extensions(files, folders[1]))
+        filtered_files = filter_files_extensions(files, folders[1])
+        
+        # Apply shard filtering for diffusion_models to avoid showing individual shards
+        if folder_name in ["diffusion_models", "unet"]:
+            filtered_files = filter_sharded_models(filtered_files)
+        
+        output_list.update(filtered_files)
         output_folders = {**output_folders, **folders_all}
 
     return sorted(list(output_list)), output_folders, time.perf_counter()
