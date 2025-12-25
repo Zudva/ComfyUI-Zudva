@@ -371,8 +371,9 @@ def filter_sharded_models(files: list[str]) -> list[str]:
     this function:
     1. Detects shard patterns (e.g., -00001-of-00006, -00002-of-00006)
     2. Groups shards by their parent directory
-    3. Returns only the parent directory path for each sharded model
-    4. Keeps non-sharded files as-is
+    3. For models with high_noise_model/low_noise_model subdirs, exposes both as separate entries
+    4. Returns only the parent directory path for each sharded model
+    5. Keeps non-sharded files as-is
     
     Example:
         Input: [
@@ -382,7 +383,8 @@ def filter_sharded_models(files: list[str]) -> list[str]:
             'regular_model.safetensors'
         ]
         Output: [
-            'Wan2.2-I2V-A14B',
+            'Wan2.2-I2V-A14B/high_noise_model',
+            'Wan2.2-I2V-A14B/low_noise_model',
             'regular_model.safetensors'
         ]
     """
@@ -391,25 +393,32 @@ def filter_sharded_models(files: list[str]) -> list[str]:
     # Pattern for sharded model files: something-00001-of-00006.ext
     shard_pattern = re.compile(r'-\d{5}-of-\d{5}\.(safetensors|bin|pth|ckpt)$', re.IGNORECASE)
     
-    sharded_model_roots = set()
+    sharded_model_dirs = set()
     non_sharded_files = []
     
     for file_path in files:
         if shard_pattern.search(file_path):
-            # This is a shard - extract the model root directory
+            # This is a shard - extract the parent directory
             # For 'Wan2.2-I2V-A14B/high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors'
-            # we want to keep just 'Wan2.2-I2V-A14B'
+            # we want to keep 'Wan2.2-I2V-A14B/high_noise_model'
             parts = file_path.split(os.sep)
-            if len(parts) > 1:
-                # Get the top-level directory (model name)
-                model_root = parts[0]
-                sharded_model_roots.add(model_root)
+            if len(parts) >= 2:
+                # Check if this is a known submodel pattern (high_noise_model, low_noise_model)
+                parent_dir = parts[-2]  # e.g., 'high_noise_model'
+                if parent_dir in ['high_noise_model', 'low_noise_model']:
+                    # Keep the full path to the submodel directory
+                    model_path = os.sep.join(parts[:-1])
+                    sharded_model_dirs.add(model_path)
+                else:
+                    # For other sharded models, keep just the top-level directory
+                    model_root = parts[0]
+                    sharded_model_dirs.add(model_root)
         else:
             # Not a shard - keep as-is
             non_sharded_files.append(file_path)
     
-    # Combine: sharded model roots + non-sharded files
-    result = list(sharded_model_roots) + non_sharded_files
+    # Combine: sharded model directories + non-sharded files
+    result = list(sharded_model_dirs) + non_sharded_files
     return sorted(result)
 
 
@@ -466,9 +475,14 @@ def get_filename_list_(folder_name: str) -> tuple[list[str], dict[str, float], f
         files, folders_all = recursive_search(x, excluded_dir_names=[".git"])
         filtered_files = filter_files_extensions(files, folders[1])
         
-        # Apply shard filtering for diffusion_models to avoid showing individual shards
-        if folder_name in ["diffusion_models", "unet"]:
+        # Apply shard filtering for diffusion_models and loras to avoid showing individual shards
+        if folder_name in ["diffusion_models", "unet", "loras", "checkpoints"]:
             filtered_files = filter_sharded_models(filtered_files)
+        
+        # Filter out duplicate files with (1), (2), etc. suffixes (browser download duplicates)
+        import re
+        duplicate_pattern = re.compile(r'\(\d+\)\.(safetensors|bin|pth|ckpt|pt|gguf)$', re.IGNORECASE)
+        filtered_files = {f for f in filtered_files if not duplicate_pattern.search(f)}
         
         output_list.update(filtered_files)
         output_folders = {**output_folders, **folders_all}
