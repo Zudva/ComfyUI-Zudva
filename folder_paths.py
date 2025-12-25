@@ -9,7 +9,7 @@ from collections.abc import Collection
 
 from comfy.cli_args import args
 
-supported_pt_extensions: set[str] = {'.ckpt', '.pt', '.pt2', '.bin', '.pth', '.safetensors', '.pkl', '.sft'}
+supported_pt_extensions: set[str] = {'.ckpt', '.pt', '.pt2', '.bin', '.pth', '.safetensors', '.pkl', '.sft', '.gguf'}
 
 folder_names_and_paths: dict[str, tuple[list[str], set[str]]] = {}
 
@@ -20,13 +20,33 @@ else:
     base_path = os.path.dirname(os.path.realpath(__file__))
 
 models_dir = os.path.join(base_path, "models")
+
+# HF cache integration - add early so custom nodes can inherit these paths
+hf_cache_dir = os.environ.get("HF_HOME", "/media/zudva/cache/hf_cache")
+hf_cache_exists = os.path.exists(hf_cache_dir)
+
 folder_names_and_paths["checkpoints"] = ([os.path.join(models_dir, "checkpoints")], supported_pt_extensions)
 folder_names_and_paths["configs"] = ([os.path.join(models_dir, "configs")], [".yaml"])
 
-folder_names_and_paths["loras"] = ([os.path.join(models_dir, "loras")], supported_pt_extensions)
-folder_names_and_paths["vae"] = ([os.path.join(models_dir, "vae")], supported_pt_extensions)
-folder_names_and_paths["text_encoders"] = ([os.path.join(models_dir, "text_encoders"), os.path.join(models_dir, "clip")], supported_pt_extensions)
-folder_names_and_paths["diffusion_models"] = ([os.path.join(models_dir, "unet"), os.path.join(models_dir, "diffusion_models")], supported_pt_extensions)
+# Add HF cache as fallback for loras, vae, text_encoders (for custom nodes that copy these lists)
+loras_dirs = [os.path.join(models_dir, "loras")]
+vae_dirs = [os.path.join(models_dir, "vae")]
+text_encoder_dirs = [os.path.join(models_dir, "text_encoders"), os.path.join(models_dir, "clip")]
+
+if hf_cache_exists:
+    loras_dirs.append(hf_cache_dir)
+    vae_dirs.append(hf_cache_dir)
+    text_encoder_dirs.append(hf_cache_dir)
+
+folder_names_and_paths["loras"] = (loras_dirs, supported_pt_extensions)
+folder_names_and_paths["vae"] = (vae_dirs, supported_pt_extensions)
+folder_names_and_paths["text_encoders"] = (text_encoder_dirs, supported_pt_extensions)
+
+# Add HF cache to diffusion_models BEFORE custom nodes copy this list
+diffusion_dirs = [os.path.join(models_dir, "unet"), os.path.join(models_dir, "diffusion_models")]
+if hf_cache_exists:
+    diffusion_dirs.append(hf_cache_dir)
+folder_names_and_paths["diffusion_models"] = (diffusion_dirs, supported_pt_extensions)
 folder_names_and_paths["clip_vision"] = ([os.path.join(models_dir, "clip_vision")], supported_pt_extensions)
 folder_names_and_paths["style_models"] = ([os.path.join(models_dir, "style_models")], supported_pt_extensions)
 folder_names_and_paths["embeddings"] = ([os.path.join(models_dir, "embeddings")], supported_pt_extensions)
@@ -362,6 +382,18 @@ def get_full_path(folder_name: str, filename: str) -> str | None:
             return full_path
         elif os.path.islink(full_path):
             logging.warning("WARNING path {} exists but doesn't link anywhere, skipping.".format(full_path))
+
+    # If not found in configured model folders, try HF cache directory as a fallback
+    try:
+        hf_cache = os.environ.get("HF_HOME", "/media/zudva/cache/hf_cache")
+        if hf_cache and os.path.isdir(hf_cache):
+            # Look for matching filename in HF cache
+            basename = os.path.basename(filename)
+            for dirpath, _dirs, files in os.walk(hf_cache):
+                if basename in files:
+                    return os.path.join(dirpath, basename)
+    except Exception:
+        pass
 
     return None
 

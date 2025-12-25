@@ -8,26 +8,66 @@ This is the ComfyUI repository - a powerful node-based UI for Stable Diffusion a
 
 ### 1. Virtual Environment (MANDATORY)
 
-**ALWAYS use the project virtual environment for ALL operations:**
+**CRITICAL: ALWAYS use the project virtual environment for ALL operations:**
 
 - **Python Path**: `/media/zudva/git/git/ComfyUI/.venv/bin/python`
 - **Pip Path**: `/media/zudva/git/git/ComfyUI/.venv/bin/pip`
 - **Project Root**: `/media/zudva/git/git/ComfyUI`
 
+**АБСОЛЮТНО ЗАПРЕЩЕНО:**
+- ❌ `python` или `python3` без полного пути к venv
+- ❌ `pip install` без `.venv/bin/pip`
+- ❌ Установка пакетов в системный Python или conda base
+- ❌ Использование `python -m pip` от системного интерпретатора
+
+**ВСЕГДА ОБЯЗАТЕЛЬНО:**
+- ✅ `.venv/bin/python script.py`
+- ✅ `.venv/bin/pip install package`
+- ✅ `source .venv/bin/activate` перед ЛЮБОЙ командой в терминале
+- ✅ Проверить `which python` → должен показать `.venv/bin/python`
+
 ### 2. Running Python Code
 
-When suggesting Python commands or scripts, ALWAYS use:
+**ПЕРЕД ЛЮБОЙ КОМАНДОЙ: активируй venv или используй полный путь!**
 
 ```bash
-# ✅ CORRECT
-/media/zudva/git/git/ComfyUI/.venv/bin/python script.py
-.venv/bin/python script.py  # If in project root
-
-# ❌ WRONG - DO NOT SUGGEST
+# ✅ ПРАВИЛЬНО - Вариант 1: Активация venv
+cd /media/zudva/git/git/ComfyUI
+source .venv/bin/activate
 python script.py
-python3 script.py
+pip install package
+
+# ✅ ПРАВИЛЬНО - Вариант 2: Полный путь (если venv не активирован)
+/media/zudva/git/git/ComfyUI/.venv/bin/python script.py
+.venv/bin/pip install package  # Из project root
+
+# ❌ АБСОЛЮТНО ЗАПРЕЩЕНО
+python script.py          # Системный Python!
+python3 script.py         # Системный Python!
+pip install package       # Системный pip!
 /usr/bin/python3 script.py
+python -m pip install package  # Если не из venv!
 ```
+
+**Правило для агента:**
+- Перед ЛЮБОЙ командой с `python`/`pip` → напиши `source .venv/bin/activate` или используй полный путь
+- После активации → проверь `which python` для уверенности
+- При ошибках импорта → СНАЧАЛА проверь, в каком окружении запущен код
+
+### Terminal Management
+
+**CRITICAL: Never interrupt running processes with unrelated commands:**
+
+- ✅ **ALWAYS use separate terminals for independent workflows**
+- ❌ **NEVER send unrelated commands to a terminal with active background process**
+- ❌ **NEVER send commands to terminal running server/watch/daemon**
+
+**Examples:**
+- ComfyUI server running → Use NEW terminal for other commands
+- Flask server running → Use NEW terminal for pip install
+- Watch task running → Use NEW terminal for file operations
+
+**Rule:** If terminal has `isBackground=true` process or long-running server, DO NOT reuse it for other commands.
 
 ### 3. Installing Dependencies
 
@@ -247,7 +287,6 @@ The project uses ComfyUI-MultiGPU for model distribution:
 ## Common Issues & Solutions
 
 ### Issue: Module not found
-```bash
 # Solution: Ensure using venv Python
 which python  # Should show: /media/zudva/git/git/ComfyUI/.venv/bin/python
 ```
@@ -275,6 +314,30 @@ ls /media/zudva/git/git/ComfyUI/models/checkpoints/
 6. **Use launcher scripts instead of direct python calls**
 7. **Keep dependencies in requirements.txt**
 8. **Document custom nodes with docstrings**
+
+## Agent Behavior Rules
+
+### NEVER Suggest Rollbacks or "Easier Alternatives"
+
+**CRITICAL**: When user commits to an experimental or complex approach:
+- **DO NOT** suggest reverting to simpler/completed solutions
+- **DO NOT** recommend "safer" alternatives unless explicitly asked
+- **DO NOT** add disclaimers like "RealESRGAN is better/faster/safer"
+- **DO** focus 100% on solving the chosen path
+- **DO** troubleshoot errors and move forward
+- **DO** ask clarifying questions about the current approach only
+
+**Example BAD responses:**
+- "Рекомендация: используйте RealESRGAN результат..."
+- "Or stick with RealESRGAN?"
+- "This is experimental, maybe use X instead?"
+
+**Example GOOD responses:**
+- "Fixing error X in current approach..."
+- "Need to install Y dependency, proceeding..."
+- "Testing experimental method, running command..."
+
+**Bias toward action**: If user says "давай применим экспериментальные способы" - APPLY THEM, don't question the choice.
 
 ## Additional Resources
 
